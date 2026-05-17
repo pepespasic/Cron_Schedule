@@ -1,0 +1,46 @@
+# Large data files
+cron_schedule.txt
+cron_schedule_orig.txt
+sorted_cron_schedule.txt
+sorted.cron_schedule.txt
+
+# Generated output files
+cron_output_*.txt
+execution_map_*.csv
+heatmap_*.png
+
+# Temporary files
+temp
+*.tmp
+
+# Backup files
+*.orig
+*_IMPROVED.py
+cron_visualizer_summary.txt
+QUICK_FIX_GUIDE.txt
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter Notebook
+.ipynb_checkpoints
