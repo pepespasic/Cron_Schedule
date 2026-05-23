@@ -1,8 +1,115 @@
 import re
+import sys
 
-# Read file and save in an object:
-with open("cron_schedule.txt", 'r') as f:
-    cron_schedule = f.readlines()
+# ── Cron entry refinement helpers ──────────────────────────────────────────────
+
+def _strip_leading_zeros(s):
+    """Remove leading zeros from a pure-numeric string ('05' → '5')."""
+    return str(int(s)) if s.isdigit() else s
+
+
+def _refine_segment(seg):
+    """Apply leading-zero removal to one cron segment (no commas)."""
+    seg = seg.strip()
+    if seg == '*':
+        return '*'
+    if '/' in seg:
+        base, step = seg.split('/', 1)
+        step = _strip_leading_zeros(step)
+        if base == '*':
+            return f'*/{step}'
+        if '-' in base:
+            lo, hi = base.split('-', 1)
+            return f'{_strip_leading_zeros(lo)}-{_strip_leading_zeros(hi)}/{step}'
+        return f'{_strip_leading_zeros(base)}/{step}'
+    if '-' in seg:
+        lo, hi = seg.split('-', 1)
+        return f'{_strip_leading_zeros(lo)}-{_strip_leading_zeros(hi)}'
+    return _strip_leading_zeros(seg)
+
+
+def _segment_sort_key(seg):
+    """Numeric start value of a segment, used for ascending comma-list sort."""
+    seg = seg.strip()
+    if seg == '*' or seg.startswith('*/'):
+        return 0
+    if '-' in seg:
+        return int(seg.split('-')[0])
+    base = seg.split('/')[0] if '/' in seg else seg
+    return int(base) if base.isdigit() else 0
+
+
+_FULL_RANGES = {
+    0: {'0-59'},        # minute
+    1: {'0-23'},        # hour
+    2: {'1-31'},        # day of month
+    3: {'1-12'},        # month
+    4: {'0-6', '1-7'},  # day of week
+}
+
+
+def _refine_field(field_str, field_idx):
+    """
+    Refine one cron field:
+      1. Strip leading zeros from all numeric parts.
+      2. Sort comma-separated segments ascending by start value.
+      3. Replace full-range expressions with '*'.
+    """
+    field_str = field_str.strip()
+    if field_str == '*':
+        return '*'
+    if ',' in field_str:
+        segs = [_refine_segment(s) for s in field_str.split(',')]
+        segs.sort(key=_segment_sort_key)
+        result = ','.join(segs)
+    else:
+        result = _refine_segment(field_str)
+    if result in _FULL_RANGES.get(field_idx, set()):
+        return '*'
+    return result
+
+
+def refine_cron_entry(entry_str):
+    """
+    Refine a 5-field cron entry string by applying _refine_field to each field.
+    Entries with fewer than 5 fields are returned unchanged.
+    """
+    parts = entry_str.split()
+    if len(parts) < 5:
+        return entry_str
+    refined = [_refine_field(parts[i], i) for i in range(5)]
+    return ' '.join(refined + parts[5:])
+
+# ── End of refinement helpers ──────────────────────────────────────────────────
+
+# Prompt user for input filename
+print("=" * 80)
+print("CRON SCHEDULE VALIDATOR")
+print("=" * 80)
+print()
+
+user_input = input("Enter cron schedule filename (default: cron_schedule.txt): ").strip()
+
+# Use default if user just presses Enter
+if user_input == "":
+    input_filename = "cron_schedule.txt"
+    print(f"Using default: {input_filename}")
+else:
+    input_filename = user_input
+    print(f"Using: {input_filename}")
+
+print()
+
+# Check if file exists
+try:
+    with open(input_filename, 'r') as f:
+        cron_schedule = f.readlines()
+    print(f"✓ Successfully loaded {len(cron_schedule)} cron schedules from '{input_filename}'")
+    print()
+except FileNotFoundError:
+    print(f"ERROR: File '{input_filename}' not found!")
+    print("Please make sure the file exists and try again.")
+    sys.exit(1)
 
 MAX_DAYS_IN_MONTH = 31
 MAX_MONTH = 12
@@ -15,6 +122,50 @@ MAX_HOURS = 23
 for i in range(len(cron_schedule)):
     cron_schedule[i] = cron_schedule[i].strip()
 
+# ── Derive output filenames from input filename ────────────────────────────────
+_base, _sep, _ext = input_filename.rpartition('.')
+if _sep:
+    refined_filename    = f"{_base}_refined.{_ext}"
+    comparison_filename = f"{_base}_comparison.{_ext}"
+else:
+    refined_filename    = f"{input_filename}_refined"
+    comparison_filename = f"{input_filename}_comparison"
+
+# ── Refine entries and write output files ──────────────────────────────────────
+comparison_rows = []
+for i in range(len(cron_schedule)):
+    original = cron_schedule[i]
+    refined  = refine_cron_entry(original)
+    cron_schedule[i] = refined
+    if refined != original:
+        comparison_rows.append((original, refined))
+
+with open(refined_filename, 'w') as f:
+    f.write('\n'.join(cron_schedule))
+    if cron_schedule:
+        f.write('\n')
+
+with open(comparison_filename, 'w') as f:
+    f.write('Original\tRefined\n')
+    for orig, ref in comparison_rows:
+        f.write(f'{orig}\t{ref}\n')
+
+print(f"✓ {len(comparison_rows)} entries refined  → '{refined_filename}'")
+print(f"✓ Comparison file saved ({len(comparison_rows)} changed rows) → '{comparison_filename}'")
+print()
+
+print("=" * 80)
+print(f"COMPARISON PREVIEW — first 10 of {len(comparison_rows)} refined entries")
+print("=" * 80)
+print(f"  {'Original':<45} Refined")
+print("-" * 80)
+for i, (orig, ref) in enumerate(comparison_rows[:10]):
+    print(f"  {orig:<45} {ref}")
+if len(comparison_rows) > 10:
+    print(f"  ... and {len(comparison_rows) - 10} more rows in '{comparison_filename}'")
+print("=" * 80)
+print()
+
 # Sort cron schedule list in ascending order
 cron_schedule.sort()
 
@@ -25,12 +176,22 @@ for element in cron_schedule:
 
 # Print number of elements in the dictionary.
 count = len(cron_dict)
-print(f"Dictionary has {count} elements.\n")
+print(f"Found {count} unique cron expressions after deduplication (identical lines counted as one).\n")
 
 # Loop through the dictionary and print keys and values
-for key, value in cron_dict.items():
-    if value >= 100:
-        print(f"{key} {value}")
+print("=" * 80)
+print("DUPLICATE CRON ENTRIES (appearing 100 or more times)")
+print("  These are cron expressions that repeat most frequently in the input file.")
+print("=" * 80)
+print(f"  {'Cron Expression':<60} Count")
+print("-" * 80)
+high_freq = [(k, v) for k, v in sorted(cron_dict.items(), key=lambda x: x[1], reverse=True) if v >= 100]
+for key, value in high_freq[:10]:
+    print(f"  {key:<60} {value}")
+if len(high_freq) > 10:
+    print(f"  ... and {len(high_freq) - 10} more entries not shown")
+print("=" * 80)
+print()
 
 # Loop through all keys in cron dictionary and split them into a separtate list of substrings and add them to list.
 all_cron_substrings = []
@@ -38,12 +199,20 @@ for key in cron_dict:
     cron_substrings_list = key.split()
     all_cron_substrings.append(cron_substrings_list)
 
-# Loop through list and print out list of substrings 
-for i in range(len(all_cron_substrings)):
-    if i < 50:
-        print(f"{all_cron_substrings[i]}\n")
+# Loop through list and print out list of substrings
+total = len(all_cron_substrings)
+print("=" * 80)
+print(f"PARSED CRON FIELDS — first 10 of {total} entries")
+print("  Each entry is split into fields: [minute, hour, day_of_month, month, day_of_week]")
+print("=" * 80)
+for i in range(total):
+    if i < 10:
+        print(f"  {i + 1:>3}. {all_cron_substrings[i]}")
     else:
+        print(f"  ... and {total - 10} more entries not shown")
         break
+print("=" * 80)
+
 def matches_pattern(cron_substring: str):
     # Define the possible patterns for a cron substring
     cron_substrings_pattern = [
@@ -265,7 +434,7 @@ invalid_pattern_entries = []
 invalid_range_entries = []
 invalid_field_count_entries = []
 
-print("\n")
+print()
 
 def generate_unique_substrings(cron_list):
     """
@@ -406,32 +575,37 @@ def display_invalid_entries():
     print("=" * 80)
     print()
 
-    # Display invalid field count entries
-    if invalid_field_count_entries:
-        print(f"INVALID FIELD COUNT ({len(invalid_field_count_entries)} entries):")
-        print("-" * 80)
-        for entry in invalid_field_count_entries:
-            print(f"  {entry}")
-        print()
+    no_invalid = not invalid_field_count_entries and not invalid_pattern_entries and not invalid_range_entries
 
-    # Display invalid pattern entries
-    if invalid_pattern_entries:
-        print(f"INVALID PATTERN ({len(invalid_pattern_entries)} entries):")
-        print("-" * 80)
-        field_names = ['minute', 'hour', 'day_of_month', 'month', 'day_of_week']
-        for item in invalid_pattern_entries:
-            field_name = field_names[item['field_index']] if item['field_index'] < len(field_names) else 'unknown'
-            print(f"  Entry: {item['entry']}")
-            print(f"  Invalid field: '{item['invalid_field']}' (position: {item['field_index']}, {field_name})")
+    if no_invalid:
+        print("  ✓ No invalid entries found. All cron expressions passed validation.")
+    else:
+        # Display invalid field count entries
+        if invalid_field_count_entries:
+            print(f"INVALID FIELD COUNT ({len(invalid_field_count_entries)} entries):")
+            print("-" * 80)
+            for entry in invalid_field_count_entries:
+                print(f"  {entry}")
             print()
 
-    # Display invalid range entries
-    if invalid_range_entries:
-        print(f"INVALID RANGE ({len(invalid_range_entries)} entries):")
-        print("-" * 80)
-        for entry in invalid_range_entries:
-            print(f"  {entry}")
-        print()
+        # Display invalid pattern entries
+        if invalid_pattern_entries:
+            print(f"INVALID PATTERN ({len(invalid_pattern_entries)} entries):")
+            print("-" * 80)
+            field_names = ['minute', 'hour', 'day_of_month', 'month', 'day_of_week']
+            for item in invalid_pattern_entries:
+                field_name = field_names[item['field_index']] if item['field_index'] < len(field_names) else 'unknown'
+                print(f"  Entry: {item['entry']}")
+                print(f"  Invalid field: '{item['invalid_field']}' (position: {item['field_index']}, {field_name})")
+                print()
+
+        # Display invalid range entries
+        if invalid_range_entries:
+            print(f"INVALID RANGE ({len(invalid_range_entries)} entries):")
+            print("-" * 80)
+            for entry in invalid_range_entries:
+                print(f"  {entry}")
+            print()
 
     print("=" * 80)
     print()
@@ -441,7 +615,7 @@ def display_invalid_entries():
 display_validation_statistics()
 
 # Display minute/hour combinations
-display_min_hour_combinations(limit=50)
+display_min_hour_combinations(limit=10)
 
 # Display invalid entries
 display_invalid_entries()

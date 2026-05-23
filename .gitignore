@@ -1,6 +1,13 @@
 # Large data files
 cron_schedule.txt
+cron_schedule.tsv
 cron_schedule_orig.txt
+cron_schedule_4k_comparison.txt
+cron_schedule_4k_refined.txt
+cron_schedule_comparison.txt
+cron_schedule_refined.txt
+job_cron.tsv
+my_prompts.txt
 sorted_cron_schedule.txt
 sorted.cron_schedule.txt
 
