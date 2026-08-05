@@ -46,28 +46,18 @@ class CronParser:
                 result.update(CronParser.parse_field(part, min_val, max_val))
             return result
 
-        # Handle step values (e.g., */15 or 1-10/2)
+        # Handle step values (e.g., */15 or 1-10/2 or 7-59/15)
         if '/' in field:
             base, step = field.split('/', 1)
             step = int(step)
 
             if base == '*':
-                base_set = set(range(min_val, max_val + 1))
+                result = set(range(min_val, max_val + 1, step))
             elif '-' in base:
                 start, end = map(int, base.split('-', 1))
-                base_set = set(range(start, end + 1))
+                result = set(range(start, end + 1, step))
             else:
-                base_set = {int(base)}
-
-            # Apply step
-            for val in base_set:
-                if val % step == 0 or (base != '*' and val in base_set):
-                    if min_val <= val <= max_val:
-                        result.add(val)
-
-            # For */n pattern, start from min_val
-            if base == '*':
-                result = {val for val in range(min_val, max_val + 1, step)}
+                result = set(range(int(base), max_val + 1, step))
 
             return result
 
